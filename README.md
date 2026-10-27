@@ -19,9 +19,9 @@ Configuration is loaded from `configs/default.yml` and can be overridden with en
 | Environment Variable | Config Key | Description |
 |---|---|---|
 | `TELEGRAM_BOT_TOKEN` | `telegram.botToken` | Telegram Bot token from `@BotFather` (required) |
-| `A2A_URL` | `a2a.url` | Full URL to the A2A agent endpoint (required) |
+| `AGENT_CARD_URL` | `agent.cardUrl` | Full URL to the agent's A2A Agent Card (required) |
+| `AGENT_CARD_CACHE_TTL` | `agent.cardCacheTTL` | Agent card cache TTL (0 = fetch once at startup, default `0s`) |
 | `TELEGRAM_ALLOWED_USERS` | `telegram.allowedUsers` | Comma-separated list of allowed Telegram user IDs (empty = allow all) |
-| `A2A_TIMEOUT` | `a2a.timeout` | HTTP timeout for A2A requests (default `120s`) |
 | `LOG_LEVEL` | `logger.level` | Log level (`debug`, `info`, `warn`, `error`) |
 
 ## Bot Commands
@@ -52,7 +52,7 @@ go build -o app ./cmd/app/main.go
 
 Run the service locally. 
 
-Inputs: `TELEGRAM_BOT_TOKEN`, `A2A_URL`
+Inputs: `TELEGRAM_BOT_TOKEN`, `AGENT_CARD_URL`
 
 ```sh
 go run cmd/app/main.go

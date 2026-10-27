@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"telegram-a2a/internal/entities"
 	"telegram-a2a/internal/ports"
 	"time"
@@ -17,36 +18,148 @@ import (
 )
 
 type A2AClient struct {
-	endpointURL string
-	httpClient  *http.Client
-	logger      ports.Logger
+	cardURL      string
+	cardCacheTTL time.Duration
+	httpClient   *http.Client
+	logger       ports.Logger
+
+	mu             sync.RWMutex
+	cachedCard     *entities.AgentCard
+	cardFetchedAt  time.Time
+	messageEndpoint string
 }
 
 var _ ports.A2AClient = (*A2AClient)(nil)
 
 func NewA2AClient(cfg ports.Config, logger ports.Logger) (*A2AClient, error) {
-	cfg.SetDefault("timeout", 120*time.Second)
+	cfg.SetDefault("cardCacheTTL", 0*time.Second)
 
-	rawURL := strings.TrimSpace(cfg.GetString("url"))
-	if rawURL == "" {
-		return nil, errors.New("a2a url is required")
+	cardURL := strings.TrimSpace(cfg.GetString("cardUrl"))
+	if cardURL == "" {
+		return nil, errors.New("agent cardUrl is required")
 	}
 
-	// Ensure A2A endpoint URL has a trailing slash to avoid 307 redirects on POST
-	if !strings.HasSuffix(rawURL, "/") {
-		rawURL += "/"
-	}
-
-	return &A2AClient{
-		endpointURL: rawURL,
+	client := &A2AClient{
+		cardURL:      cardURL,
+		cardCacheTTL: cfg.GetDuration("cardCacheTTL"),
 		httpClient: &http.Client{
-			Timeout: cfg.GetDuration("timeout"),
+			Timeout: 120 * time.Second,
 		},
 		logger: logger,
-	}, nil
+	}
+
+	// Fetch agent card on startup (fail hard if unavailable)
+	if err := client.refreshAgentCard(context.Background()); err != nil {
+		return nil, fmt.Errorf("failed to fetch agent card: %w", err)
+	}
+
+	return client, nil
+}
+
+func (c *A2AClient) refreshAgentCard(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.cardURL, nil)
+	if err != nil {
+		return fmt.Errorf("create agent card request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("agent card endpoint unreachable: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read agent card response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("agent card returned unexpected status: %d", resp.StatusCode)
+	}
+
+	var card entities.AgentCard
+	if err := json.Unmarshal(respBytes, &card); err != nil {
+		return fmt.Errorf("invalid agent card json: %w", err)
+	}
+
+	if strings.TrimSpace(card.Name) == "" {
+		return errors.New("invalid agent card: missing name")
+	}
+
+	if len(card.SupportedInterfaces) == 0 {
+		return errors.New("invalid agent card: no supported interfaces")
+	}
+
+	endpoint := strings.TrimSpace(card.SupportedInterfaces[0].URL)
+	if endpoint == "" {
+		return errors.New("invalid agent card: first supported interface has no url")
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cachedCard = &card
+	c.cardFetchedAt = time.Now()
+	c.messageEndpoint = endpoint
+
+	c.logger.Info("agent card fetched", ports.Fields{
+		"name":     card.Name,
+		"version":  card.Version,
+		"endpoint": endpoint,
+	})
+
+	return nil
+}
+
+func (c *A2AClient) getAgentCard(ctx context.Context) (*entities.AgentCard, error) {
+	c.mu.RLock()
+	card := c.cachedCard
+	fetchedAt := c.cardFetchedAt
+	c.mu.RUnlock()
+
+	// 0 = unlimited cache (never refresh after startup)
+	if c.cardCacheTTL > 0 && time.Since(fetchedAt) > c.cardCacheTTL {
+		if err := c.refreshAgentCard(ctx); err != nil {
+			return nil, err
+		}
+		c.mu.RLock()
+		card = c.cachedCard
+		c.mu.RUnlock()
+	}
+
+	if card == nil {
+		return nil, errors.New("agent card not cached")
+	}
+	return card, nil
+}
+
+func (c *A2AClient) getMessageEndpoint(ctx context.Context) (string, error) {
+	c.mu.RLock()
+	endpoint := c.messageEndpoint
+	c.mu.RUnlock()
+
+	if endpoint != "" {
+		return endpoint, nil
+	}
+
+	// Refresh if endpoint not yet set
+	if err := c.refreshAgentCard(ctx); err != nil {
+		return "", err
+	}
+
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.messageEndpoint == "" {
+		return "", errors.New("agent card has no message endpoint")
+	}
+	return c.messageEndpoint, nil
 }
 
 func (c *A2AClient) SendMessage(ctx context.Context, messageText string, contextID string) (*entities.TaskResult, error) {
+	endpoint, err := c.getMessageEndpoint(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	msgID := uuid.NewString()
 	msg := entities.A2AMessage{
 		Role:      "user",
@@ -75,7 +188,7 @@ func (c *A2AClient) SendMessage(ctx context.Context, messageText string, context
 		return nil, fmt.Errorf("marshal a2a request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpointURL, bytes.NewReader(bodyBytes))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("create a2a request: %w", err)
 	}
@@ -112,36 +225,37 @@ func (c *A2AClient) SendMessage(ctx context.Context, messageText string, context
 	return rpcResp.Result, nil
 }
 
-// HealthCheck probes and validates the A2A agent card endpoint (/.well-known/agent-card.json).
+// HealthCheck validates the agent card and its message endpoint.
 func (c *A2AClient) HealthCheck(ctx context.Context) error {
-	healthURL := c.endpointURL + ".well-known/agent-card.json"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
+	card, err := c.getAgentCard(ctx)
 	if err != nil {
-		return fmt.Errorf("create a2a health request: %w", err)
+		return err
+	}
+
+	if len(card.SupportedInterfaces) == 0 {
+		return errors.New("agent card has no supported interfaces")
+	}
+
+	endpoint := strings.TrimSpace(card.SupportedInterfaces[0].URL)
+	if endpoint == "" {
+		return errors.New("agent card first interface has no url")
+	}
+
+	// Verify the message endpoint is reachable
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("create health check request: %w", err)
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("a2a endpoint unreachable: %w", err)
+		return fmt.Errorf("message endpoint unreachable: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	respBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("read a2a agent card response: %w", err)
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("a2a agent card returned unexpected status: %d", resp.StatusCode)
-	}
-
-	var card entities.AgentCard
-	if err := json.Unmarshal(respBytes, &card); err != nil {
-		return fmt.Errorf("invalid a2a agent card json: %w", err)
-	}
-
-	if strings.TrimSpace(card.Name) == "" {
-		return errors.New("invalid a2a agent card: missing name")
+	// Accept any non-5xx (endpoint may not support HEAD, that's fine)
+	if resp.StatusCode >= 500 {
+		return fmt.Errorf("message endpoint returned server error: %d", resp.StatusCode)
 	}
 
 	return nil

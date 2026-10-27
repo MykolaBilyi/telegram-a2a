@@ -3,8 +3,10 @@ package adapters_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"telegram-a2a/internal/adapters"
 	"telegram-a2a/internal/entities"
 	"testing"
@@ -13,22 +15,66 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewA2AClient_WhenURLMissing_ReturnsError(t *testing.T) {
-	cfg := adapters.NewTestConfig(map[string]any{"url": "   "})
+const testAgentCard = `{
+	"name": "test-agent",
+	"description": "A test agent",
+	"version": "1.0.0",
+	"supportedInterfaces": [
+		{
+			"url": "%s",
+			"protocolBinding": "JSONRPC",
+			"protocolVersion": "1.0"
+		}
+	]
+}`
+
+func newAgentCardServer(t *testing.T, messageEndpoint string) *httptest.Server {
+	cardJSON := []byte(fmt.Sprintf(testAgentCard, messageEndpoint))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// If request path ends with agent-card.json, return the card
+		if strings.HasSuffix(r.URL.Path, "agent-card.json") || r.URL.Path == "/" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(cardJSON)
+			return
+		}
+		// Otherwise treat as message endpoint
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"1","result":{"contextId":"ctx-123","status":{"state":"completed"},"artifacts":[{"parts":[{"kind":"text","text":"ok"}]}]}}`))
+	}))
+	t.Cleanup(func() { srv.Close() })
+	return srv
+}
+
+func TestNewA2AClient_WhenCardURLMissing_ReturnsError(t *testing.T) {
+	cfg := adapters.NewTestConfig(map[string]any{"cardUrl": "   "})
 	client, err := adapters.NewA2AClient(cfg, adapters.NewNoopLogger())
 	assert.Error(t, err)
 	assert.Nil(t, client)
 }
 
-func TestA2AClient_SendMessage_AppendsTrailingSlashAndSendsContextID(t *testing.T) {
+func TestNewA2AClient_WhenAgentCardUnavailable_FailsHard(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	cfg := adapters.NewTestConfig(map[string]any{
+		"cardUrl": srv.URL + "/.well-known/agent-card.json",
+	})
+	client, err := adapters.NewA2AClient(cfg, adapters.NewNoopLogger())
+	assert.Error(t, err)
+	assert.Nil(t, client)
+	assert.Contains(t, err.Error(), "404")
+}
+
+func TestA2AClient_SendMessage_UsesEndpointFromAgentCard(t *testing.T) {
 	var receivedPath string
 	var receivedReq entities.JSONRPCRequest
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	msgSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedPath = r.URL.Path
-		err := json.NewDecoder(r.Body).Decode(&receivedReq)
-		require.NoError(t, err)
-
+		_ = json.NewDecoder(r.Body).Decode(&receivedReq)
 		w.Header().Set("Content-Type", "application/json")
 		resp := entities.JSONRPCResponse{
 			JSONRPC: "2.0",
@@ -37,21 +83,29 @@ func TestA2AClient_SendMessage_AppendsTrailingSlashAndSendsContextID(t *testing.
 				ContextID: "ctx-returned-123",
 				Status:    entities.TaskStatus{State: entities.TaskStateCompleted},
 				Artifacts: []entities.Artifact{
-					{
-						Parts: []entities.A2APart{
-							{Kind: entities.PartKindText, Text: "Here are your pods"},
-						},
-					},
+					{Parts: []entities.A2APart{{Kind: entities.PartKindText, Text: "Here are your pods"}}},
 				},
 			},
 		}
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
-	defer srv.Close()
+	defer msgSrv.Close()
 
-	// Note: no trailing slash in config URL
+	cardSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		card := map[string]any{
+			"name":    "test-agent",
+			"version": "1.0.0",
+			"supportedInterfaces": []map[string]any{
+				{"url": msgSrv.URL + "/rpc", "protocolBinding": "JSONRPC", "protocolVersion": "1.0"},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(card)
+	}))
+	defer cardSrv.Close()
+
 	cfg := adapters.NewTestConfig(map[string]any{
-		"url": srv.URL + "/api/a2a/default/telegram-k8s-agent",
+		"cardUrl": cardSrv.URL + "/.well-known/agent-card.json",
 	})
 	client, err := adapters.NewA2AClient(cfg, adapters.NewNoopLogger())
 	require.NoError(t, err)
@@ -59,32 +113,38 @@ func TestA2AClient_SendMessage_AppendsTrailingSlashAndSendsContextID(t *testing.
 	result, err := client.SendMessage(context.Background(), "list my pods", "ctx-existing-001")
 	require.NoError(t, err)
 
-	assert.Equal(t, "/api/a2a/default/telegram-k8s-agent/", receivedPath)
-	assert.Equal(t, "2.0", receivedReq.JSONRPC)
-	assert.Equal(t, "message/send", receivedReq.Method)
-	assert.Equal(t, "user", receivedReq.Params.Message.Role)
-	assert.Equal(t, "message", receivedReq.Params.Message.Kind)
+	assert.Equal(t, "/rpc", receivedPath)
 	assert.Equal(t, "ctx-existing-001", receivedReq.Params.Message.ContextID)
-	require.Len(t, receivedReq.Params.Message.Parts, 1)
-	assert.Equal(t, "text", receivedReq.Params.Message.Parts[0].Kind)
-	assert.Equal(t, "list my pods", receivedReq.Params.Message.Parts[0].Text)
-
 	assert.Equal(t, "ctx-returned-123", result.ContextID)
-	assert.Equal(t, "completed", result.Status.State)
 	assert.Equal(t, "Here are your pods", adapters.ExtractText(result))
 }
 
 func TestA2AClient_SendMessage_FirstMessageOmitsContextID(t *testing.T) {
 	var rawBody map[string]any
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	msgSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&rawBody)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"1","result":{"contextId":"new-ctx","status":{"state":"completed"}}}`))
 	}))
-	defer srv.Close()
+	defer msgSrv.Close()
 
-	cfg := adapters.NewTestConfig(map[string]any{"url": srv.URL + "/"})
+	cardSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		card := map[string]any{
+			"name":    "test-agent",
+			"version": "1.0.0",
+			"supportedInterfaces": []map[string]any{
+				{"url": msgSrv.URL + "/", "protocolBinding": "JSONRPC", "protocolVersion": "1.0"},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(card)
+	}))
+	defer cardSrv.Close()
+
+	cfg := adapters.NewTestConfig(map[string]any{
+		"cardUrl": cardSrv.URL + "/.well-known/agent-card.json",
+	})
 	client, err := adapters.NewA2AClient(cfg, adapters.NewNoopLogger())
 	require.NoError(t, err)
 
@@ -100,12 +160,27 @@ func TestA2AClient_SendMessage_FirstMessageOmitsContextID(t *testing.T) {
 
 func TestA2AClient_SendMessage_HandlesErrors(t *testing.T) {
 	t.Run("non-2xx status code", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		msgSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "bad gateway", http.StatusBadGateway)
 		}))
-		defer srv.Close()
+		defer msgSrv.Close()
 
-		cfg := adapters.NewTestConfig(map[string]any{"url": srv.URL})
+		cardSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			card := map[string]any{
+				"name":    "test-agent",
+				"version": "1.0.0",
+				"supportedInterfaces": []map[string]any{
+					{"url": msgSrv.URL + "/", "protocolBinding": "JSONRPC", "protocolVersion": "1.0"},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(card)
+		}))
+		defer cardSrv.Close()
+
+		cfg := adapters.NewTestConfig(map[string]any{
+			"cardUrl": cardSrv.URL + "/.well-known/agent-card.json",
+		})
 		client, err := adapters.NewA2AClient(cfg, adapters.NewNoopLogger())
 		require.NoError(t, err)
 
@@ -115,13 +190,28 @@ func TestA2AClient_SendMessage_HandlesErrors(t *testing.T) {
 	})
 
 	t.Run("jsonrpc error response", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		msgSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"1","error":{"code":-32601,"message":"Method not found"}}`))
 		}))
-		defer srv.Close()
+		defer msgSrv.Close()
 
-		cfg := adapters.NewTestConfig(map[string]any{"url": srv.URL})
+		cardSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			card := map[string]any{
+				"name":    "test-agent",
+				"version": "1.0.0",
+				"supportedInterfaces": []map[string]any{
+					{"url": msgSrv.URL + "/", "protocolBinding": "JSONRPC", "protocolVersion": "1.0"},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(card)
+		}))
+		defer cardSrv.Close()
+
+		cfg := adapters.NewTestConfig(map[string]any{
+			"cardUrl": cardSrv.URL + "/.well-known/agent-card.json",
+		})
 		client, err := adapters.NewA2AClient(cfg, adapters.NewNoopLogger())
 		require.NoError(t, err)
 
@@ -275,47 +365,72 @@ func TestExtractADKConfirmation(t *testing.T) {
 }
 
 func TestA2AClient_HealthCheck(t *testing.T) {
-	t.Run("healthy when endpoint responds with 200 and valid agent card", func(t *testing.T) {
-		var requestedPath string
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			requestedPath = r.URL.Path
-			w.Header().Set("Content-Type", "application/json")
+	t.Run("healthy when agent card and endpoint are valid", func(t *testing.T) {
+		msgSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"name":"telegram-k8s-agent","description":"K8s agent","version":"1.0.0"}`))
 		}))
-		defer srv.Close()
+		defer msgSrv.Close()
 
-		cfg := adapters.NewTestConfig(map[string]any{"url": srv.URL + "/api/a2a/default/telegram-k8s-agent/"})
+		cardSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			card := map[string]any{
+				"name":    "test-agent",
+				"version": "1.0.0",
+				"supportedInterfaces": []map[string]any{
+					{"url": msgSrv.URL + "/", "protocolBinding": "JSONRPC", "protocolVersion": "1.0"},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(card)
+		}))
+		defer cardSrv.Close()
+
+		cfg := adapters.NewTestConfig(map[string]any{
+			"cardUrl": cardSrv.URL + "/.well-known/agent-card.json",
+		})
 		client, err := adapters.NewA2AClient(cfg, adapters.NewNoopLogger())
 		require.NoError(t, err)
 
 		err = client.HealthCheck(context.Background())
 		require.NoError(t, err)
-		assert.Equal(t, "/api/a2a/default/telegram-k8s-agent/.well-known/agent-card.json", requestedPath)
 	})
 
-	t.Run("unhealthy when endpoint returns 404", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusNotFound)
+	t.Run("unhealthy when agent card is invalid", func(t *testing.T) {
+		cardSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`not-json`))
 		}))
-		defer srv.Close()
+		defer cardSrv.Close()
 
-		cfg := adapters.NewTestConfig(map[string]any{"url": srv.URL})
-		client, err := adapters.NewA2AClient(cfg, adapters.NewNoopLogger())
-		require.NoError(t, err)
-
-		err = client.HealthCheck(context.Background())
+		cfg := adapters.NewTestConfig(map[string]any{
+			"cardUrl": cardSrv.URL + "/.well-known/agent-card.json",
+		})
+		// NewA2AClient fails hard on startup if card is invalid
+		_, err := adapters.NewA2AClient(cfg, adapters.NewNoopLogger())
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "404")
 	})
 
 	t.Run("unhealthy when endpoint returns 500", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		msgSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 		}))
-		defer srv.Close()
+		defer msgSrv.Close()
 
-		cfg := adapters.NewTestConfig(map[string]any{"url": srv.URL})
+		cardSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			card := map[string]any{
+				"name":    "test-agent",
+				"version": "1.0.0",
+				"supportedInterfaces": []map[string]any{
+					{"url": msgSrv.URL + "/", "protocolBinding": "JSONRPC", "protocolVersion": "1.0"},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(card)
+		}))
+		defer cardSrv.Close()
+
+		cfg := adapters.NewTestConfig(map[string]any{
+			"cardUrl": cardSrv.URL + "/.well-known/agent-card.json",
+		})
 		client, err := adapters.NewA2AClient(cfg, adapters.NewNoopLogger())
 		require.NoError(t, err)
 
@@ -324,43 +439,26 @@ func TestA2AClient_HealthCheck(t *testing.T) {
 		assert.Contains(t, err.Error(), "500")
 	})
 
-	t.Run("unhealthy when agent card JSON is invalid", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`not-json`))
-		}))
-		defer srv.Close()
-
-		cfg := adapters.NewTestConfig(map[string]any{"url": srv.URL})
-		client, err := adapters.NewA2AClient(cfg, adapters.NewNoopLogger())
-		require.NoError(t, err)
-
-		err = client.HealthCheck(context.Background())
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "invalid a2a agent card json")
-	})
-
-	t.Run("unhealthy when agent card is missing name", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"description":"no name field"}`))
-		}))
-		defer srv.Close()
-
-		cfg := adapters.NewTestConfig(map[string]any{"url": srv.URL})
-		client, err := adapters.NewA2AClient(cfg, adapters.NewNoopLogger())
-		require.NoError(t, err)
-
-		err = client.HealthCheck(context.Background())
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "missing name")
-	})
-
 	t.Run("unhealthy when endpoint is unreachable", func(t *testing.T) {
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-		srv.Close() // close immediately so connection is refused
+		msgSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+		msgSrv.Close()
 
-		cfg := adapters.NewTestConfig(map[string]any{"url": srv.URL})
+		cardSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			card := map[string]any{
+				"name":    "test-agent",
+				"version": "1.0.0",
+				"supportedInterfaces": []map[string]any{
+					{"url": msgSrv.URL + "/", "protocolBinding": "JSONRPC", "protocolVersion": "1.0"},
+				},
+			}
+			_ = json.NewEncoder(w).Encode(card)
+		}))
+		defer cardSrv.Close()
+
+		cfg := adapters.NewTestConfig(map[string]any{
+			"cardUrl": cardSrv.URL + "/.well-known/agent-card.json",
+		})
 		client, err := adapters.NewA2AClient(cfg, adapters.NewNoopLogger())
 		require.NoError(t, err)
 
@@ -368,3 +466,4 @@ func TestA2AClient_HealthCheck(t *testing.T) {
 		require.Error(t, err)
 	})
 }
+

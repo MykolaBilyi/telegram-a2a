@@ -10,9 +10,9 @@ telegram:
   pollTimeout: 30s
   allowedUsers: []
 
-a2a:
-  url: ""
-  timeout: 120s
+agent:
+  cardUrl: ""
+  cardCacheTTL: 0s
 
 logger:
   level: info

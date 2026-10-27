@@ -33,8 +33,8 @@ func NewConfig(configPaths ...string) (*Config, error) {
 	_ = config.BindEnv("telegram.allowedUsers", "TELEGRAM_ALLOWED_USERS")
 	_ = config.BindEnv("telegram.apiURL", "TELEGRAM_API_URL")
 	_ = config.BindEnv("telegram.pollTimeout", "TELEGRAM_POLL_TIMEOUT")
-	_ = config.BindEnv("a2a.url", "A2A_URL")
-	_ = config.BindEnv("a2a.timeout", "A2A_TIMEOUT")
+	_ = config.BindEnv("agent.cardUrl", "AGENT_CARD_URL")
+	_ = config.BindEnv("agent.cardCacheTTL", "AGENT_CARD_CACHE_TTL")
 	_ = config.BindEnv("logger.level", "LOG_LEVEL")
 
 	if err := config.ReadInConfig(); err != nil {
@@ -57,9 +57,9 @@ func (c Config) Sub(key string) ports.Config {
 		_ = sub.BindEnv("allowedUsers", "TELEGRAM_ALLOWED_USERS")
 		_ = sub.BindEnv("apiURL", "TELEGRAM_API_URL")
 		_ = sub.BindEnv("pollTimeout", "TELEGRAM_POLL_TIMEOUT")
-	} else if key == "a2a" {
-		_ = sub.BindEnv("url", "A2A_URL")
-		_ = sub.BindEnv("timeout", "A2A_TIMEOUT")
+	} else if key == "agent" {
+		_ = sub.BindEnv("cardUrl", "AGENT_CARD_URL")
+		_ = sub.BindEnv("cardCacheTTL", "AGENT_CARD_CACHE_TTL")
 	} else if key == "logger" {
 		_ = sub.BindEnv("level", "LOG_LEVEL")
 	}
