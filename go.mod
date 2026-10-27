@@ -1,12 +1,13 @@
 module telegram-a2a
 
-go 1.23.0
+go 1.27
 
 require (
 	github.com/go-chi/httprate v0.16.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
 	github.com/lithammer/shortuuid/v4 v4.3.0
+	github.com/lithammer/shortuuid/v5 v5.0.0
 	github.com/oxyno-zeta/gomock-extra-matcher v1.2.0
 	github.com/rs/cors v1.11.1
 	github.com/spf13/viper v1.21.0

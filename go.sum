@@ -28,6 +28,7 @@ github.com/kr/text v0.2.0 h1:5Nx0Ya0ZqY2ygV366QzturHI13Jq95ApcVaJBhpS+AY=
 github.com/kr/text v0.2.0/go.mod h1:eLer722TekiGuMkidMxC/pM04lWEeraHUUmBw8l2grE=
 github.com/lithammer/shortuuid/v4 v4.3.0 h1:XRr80OYPOlqxgnCv2/iuElkl/ZtXtPtLKk2AvpXGdWA=
 github.com/lithammer/shortuuid/v4 v4.3.0/go.mod h1:D5noHZ2oFw/YaKCfGy0YxyE7M0wMbezmMjPdhyEFe6Y=
+github.com/lithammer/shortuuid/v5 v5.0.0/go.mod h1:OCOiJkMSyZQYLnr1zWW2kCYW77Elp1BHWjpjNco/EGM=
 github.com/oxyno-zeta/gomock-extra-matcher v1.2.0 h1:WPEclU0y0PMwUzdDcaKZvld4aXpa3fkzjiUMQdcBEHg=
 github.com/oxyno-zeta/gomock-extra-matcher v1.2.0/go.mod h1:S0r7HmKeCGsHmvIVFMjKWwswb4+30nCNWbXRMBVPkaU=
 github.com/pelletier/go-toml/v2 v2.2.4 h1:mye9XuhQ6gvn5h28+VilKrrPoQVanw5PMw/TB0t5Ec4=
