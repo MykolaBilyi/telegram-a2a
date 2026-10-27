@@ -1,15 +1,17 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"telegram-a2a/api/server"
 	"telegram-a2a/internal/adapters"
 	"telegram-a2a/internal/ports"
-	"context"
-	"syscall"
-
-	"log"
-	"os"
-	"os/signal"
+	"telegram-a2a/internal/providers"
 )
 
 func main() {
@@ -25,12 +27,41 @@ func main() {
 		os.Exit(1)
 	}
 
-	router := server.NewRouter(config.Sub("middleware"), logger)
-	server := adapters.NewWebServer(config.Sub("http"), router, logger)
+	a2aClient, err := adapters.NewA2AClient(config.Sub("a2a"), logger)
+	if err != nil {
+		logger.Error("error creating A2A client", ports.Fields{"error": err})
+		os.Exit(1)
+	}
+
+	sessionStore := providers.NewSessionStore(config.GetDuration("application.approvalTTL"))
+
+	telegramBot, err := adapters.NewTelegramBot(config.Sub("telegram"), a2aClient, sessionStore, logger)
+	if err != nil {
+		logger.Error("error creating Telegram bot", ports.Fields{"error": err})
+		os.Exit(1)
+	}
+
+	healthCheckers := map[string]ports.HealthChecker{
+		"telegram": telegramBot,
+		"a2a":      a2aClient,
+	}
+
+	router := server.NewRouter(config.Sub("middleware"), logger, healthCheckers)
+	webServer := adapters.NewWebServer(config.Sub("http"), router, logger)
+
+	appCtx, cancelApp := context.WithCancel(context.Background())
+	defer cancelApp()
 
 	go func() {
-		if err := server.Serve(); err != nil {
-			logger.Error("server error", ports.Fields{"error": err})
+		if err := webServer.Serve(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("http server error", ports.Fields{"error": err})
+			os.Exit(1)
+		}
+	}()
+
+	go func() {
+		if err := telegramBot.Start(appCtx); err != nil {
+			logger.Error("telegram bot error", ports.Fields{"error": err})
 			os.Exit(1)
 		}
 	}()
@@ -53,15 +84,18 @@ func main() {
 		os.Exit(1)
 	}()
 
+	cancelApp()
+
 	// graceful shutdown
 	gracefulCtx, cancelShutdown := context.WithTimeout(context.Background(), config.GetDuration("application.shutdownTimeout"))
-	defer cancelShutdown() // release resources afterwards
+	defer cancelShutdown()
 
-	if err := server.Shutdown(gracefulCtx); err != nil {
-		logger.Error("shutdown error", ports.Fields{"error": err})
-		defer os.Exit(1)
-		return
+	if err := telegramBot.Stop(gracefulCtx); err != nil {
+		logger.Error("telegram bot shutdown error", ports.Fields{"error": err})
 	}
 
-	defer os.Exit(0)
+	if err := webServer.Shutdown(gracefulCtx); err != nil {
+		logger.Error("http server shutdown error", ports.Fields{"error": err})
+		os.Exit(1)
+	}
 }
