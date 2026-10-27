@@ -13,7 +13,7 @@ import (
 
 func TestNewConfig_LoadsDefaultYAMLAndEnvOverrides(t *testing.T) {
 	t.Setenv("TELEGRAM_BOT_TOKEN", "test-secret-token")
-	t.Setenv("A2A_URL", "http://agent-service:8083/api/a2a/default/agent/")
+	t.Setenv("AGENT_CARD_URL", "http://agent-service:8083/api/a2a/default/agent/.well-known/agent-card.json")
 	t.Setenv("TELEGRAM_ALLOWED_USERS", "111, 222, 333")
 
 	cfg, err := adapters.NewConfig()
@@ -26,9 +26,8 @@ func TestNewConfig_LoadsDefaultYAMLAndEnvOverrides(t *testing.T) {
 	assert.Equal(t, "test-secret-token", tgSub.GetString("botToken"))
 	assert.Equal(t, []int64{111, 222, 333}, tgSub.GetInt64Slice("allowedUsers"))
 
-	a2aSub := cfg.Sub("a2a")
-	assert.Equal(t, "http://agent-service:8083/api/a2a/default/agent/", a2aSub.GetString("url"))
-	assert.Equal(t, 120*time.Second, a2aSub.GetDuration("timeout"))
+	agentSub := cfg.Sub("agent")
+	assert.Equal(t, "http://agent-service:8083/api/a2a/default/agent/.well-known/agent-card.json", agentSub.GetString("cardUrl"))
 }
 
 func TestConfig_GetInt64Slice_VariousTypes(t *testing.T) {

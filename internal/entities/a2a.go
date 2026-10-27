@@ -95,10 +95,18 @@ type PendingApproval struct {
 	ChatID    int64
 }
 
-// AgentCard represents the A2A discovery document at /.well-known/agent-card.json.
+// AgentInterface declares a supported protocol binding and its endpoint URL.
+type AgentInterface struct {
+	URL              string `json:"url"`
+	ProtocolBinding  string `json:"protocolBinding"`
+	ProtocolVersion  string `json:"protocolVersion"`
+	Tenant           string `json:"tenant,omitempty"`
+}
+
+// AgentCard represents the A2A discovery document.
 type AgentCard struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	URL         string `json:"url,omitempty"`
-	Version     string `json:"version,omitempty"`
+	Name                string           `json:"name"`
+	Description         string           `json:"description,omitempty"`
+	SupportedInterfaces []AgentInterface `json:"supportedInterfaces"`
+	Version             string           `json:"version,omitempty"`
 }

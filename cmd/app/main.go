@@ -27,7 +27,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	a2aClient, err := adapters.NewA2AClient(config.Sub("a2a"), logger)
+	a2aClient, err := adapters.NewA2AClient(config.Sub("agent"), logger)
 	if err != nil {
 		logger.Error("error creating A2A client", ports.Fields{"error": err})
 		os.Exit(1)
