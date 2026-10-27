@@ -1,10 +1,10 @@
 package middleware
 
 import (
-	"__template__/internal/entities"
-	"__template__/internal/ports"
-	"__template__/internal/providers"
-	"__template__/pkg/middleware"
+	"telegram-a2a/internal/entities"
+	"telegram-a2a/internal/ports"
+	"telegram-a2a/internal/providers"
+	"telegram-a2a/pkg/middleware"
 	"net/http"
 
 	"github.com/lithammer/shortuuid/v4"

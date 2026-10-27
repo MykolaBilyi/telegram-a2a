@@ -1,8 +1,18 @@
 application:
   shutdownTimeout: 10s
+  approvalTTL: 1h
 
 http:
   listenAddr: ":8080"
+
+telegram:
+  botToken: ""
+  pollTimeout: 30s
+  allowedUsers: []
+
+a2a:
+  url: ""
+  timeout: 120s
 
 logger:
   level: info

@@ -1,7 +1,7 @@
 package providers_test
 
 import (
-	"__template__/pkg/providers"
+	"telegram-a2a/pkg/providers"
 	"context"
 	"testing"
 

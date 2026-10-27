@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"__template__/internal/ports"
+	"telegram-a2a/internal/ports"
 	"net/http"
 
 	"github.com/rs/cors"
