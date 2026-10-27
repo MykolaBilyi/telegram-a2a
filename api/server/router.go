@@ -11,7 +11,7 @@ import (
 	"github.com/gorilla/mux"
 )
 
-func NewRouter(config ports.Config, logger ports.Logger) http.Handler {
+func NewRouter(config ports.Config, logger ports.Logger, healthCheckers ...map[string]ports.HealthChecker) http.Handler {
 	router := mux.NewRouter()
 
 	loggerProvider := providers.NewLoggerProvider(logger)
@@ -38,7 +38,7 @@ func NewRouter(config ports.Config, logger ports.Logger) http.Handler {
 			middleware.NewCORSMiddleware(config.Sub("cors")),
 		),
 	)
-	router.Handle("/health", handlers.NewHealthCheck()).Methods("GET")
+	router.Handle("/health", handlers.NewHealthCheck(healthCheckers...)).Methods("GET")
 
 	return router
 }
