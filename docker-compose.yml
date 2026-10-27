@@ -1,11 +1,16 @@
 version: '3.9'
 services:
-  __service_name__: #FIXME change service name
+  telegram-a2a:
     build:
       context: .
       dockerfile: Dockerfile
       args:
         DOCKER_BUILDKIT: 1
         PORT: 8080
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - A2A_URL=${A2A_URL}
+      - TELEGRAM_ALLOWED_USERS=${TELEGRAM_ALLOWED_USERS:-}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
     ports:
       - 8080:8080
