@@ -64,6 +64,7 @@ type tgCallbackQuery struct {
 type tgInlineKeyboardButton struct {
 	Text         string `json:"text"`
 	CallbackData string `json:"callback_data"`
+	Style        entities.TGInlineKeyboardButtonStyle `json:"style,omitempty"`
 }
 
 type tgInlineKeyboardMarkup struct {
@@ -483,8 +484,8 @@ func (b *TelegramBot) renderInputRequired(ctx context.Context, chatID, userID, t
 		markup = &tgInlineKeyboardMarkup{
 			InlineKeyboard: [][]tgInlineKeyboardButton{
 				{
-					{Text: "Approve", CallbackData: fmt.Sprintf("approve:%s", callbackID)},
-					{Text: "Reject", CallbackData: fmt.Sprintf("reject:%s", callbackID)},
+					{Text: "Approve", CallbackData: fmt.Sprintf("approve:%s", callbackID), Style: entities.TGInlineKeyboardButtonStylePrimary},
+					{Text: "Reject", CallbackData: fmt.Sprintf("reject:%s", callbackID), Style: entities.TGInlineKeyboardButtonStyleDanger},
 				},
 			},
 		}
@@ -499,7 +500,7 @@ func (b *TelegramBot) renderInputRequired(ctx context.Context, chatID, userID, t
 			for _, choice := range q.Choices {
 				buttons = append(buttons, []tgInlineKeyboardButton{
 					{
-						Text:         choice,
+						Text:         truncateText(choice, 64),
 						CallbackData: fmt.Sprintf("choice:%s:%s", callbackID, choice),
 					},
 				})
@@ -597,6 +598,7 @@ func (b *TelegramBot) getUpdates(ctx context.Context, offset int64) ([]tgUpdate,
 func (b *TelegramBot) sendMessage(ctx context.Context, chatID int64, text string, markup *tgInlineKeyboardMarkup) (*tgMessage, error) {
 	payload := map[string]any{
 		"chat_id": chatID,
+		"parse_mode": "Markdown",
 		"text":    text,
 	}
 	if markup != nil {
@@ -613,6 +615,7 @@ func (b *TelegramBot) editMessageText(ctx context.Context, chatID, messageID int
 	payload := map[string]any{
 		"chat_id":    chatID,
 		"message_id": messageID,
+		"parse_mode": "Markdown",
 		"text":       text,
 	}
 	if markup != nil {
@@ -677,4 +680,11 @@ func (b *TelegramBot) callAPI(ctx context.Context, method string, payload any, o
 
 	b.logger.Debug("telegram api response", ports.Fields{"method": method, "ok": apiResp.OK})
 	return nil
+}
+
+func truncateText(s string, max int) string {
+    if max > len(s) {
+        return s
+    }
+    return s[:strings.LastIndexAny(s[:max]," .,:;-")]
 }
