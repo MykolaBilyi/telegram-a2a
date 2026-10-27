@@ -275,12 +275,13 @@ func TestExtractADKConfirmation(t *testing.T) {
 }
 
 func TestA2AClient_HealthCheck(t *testing.T) {
-	t.Run("healthy when endpoint responds with 200", func(t *testing.T) {
+	t.Run("healthy when endpoint responds with 200 and valid agent card", func(t *testing.T) {
 		var requestedPath string
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			requestedPath = r.URL.Path
+			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"name":"telegram-k8s-agent"}`))
+			_, _ = w.Write([]byte(`{"name":"telegram-k8s-agent","description":"K8s agent","version":"1.0.0"}`))
 		}))
 		defer srv.Close()
 
@@ -290,7 +291,22 @@ func TestA2AClient_HealthCheck(t *testing.T) {
 
 		err = client.HealthCheck(context.Background())
 		require.NoError(t, err)
-		assert.Equal(t, "/api/a2a/default/telegram-k8s-agent/.well-known/agent.json", requestedPath)
+		assert.Equal(t, "/api/a2a/default/telegram-k8s-agent/.well-known/agent-card.json", requestedPath)
+	})
+
+	t.Run("unhealthy when endpoint returns 404", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+		}))
+		defer srv.Close()
+
+		cfg := adapters.NewTestConfig(map[string]any{"url": srv.URL})
+		client, err := adapters.NewA2AClient(cfg, adapters.NewNoopLogger())
+		require.NoError(t, err)
+
+		err = client.HealthCheck(context.Background())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "404")
 	})
 
 	t.Run("unhealthy when endpoint returns 500", func(t *testing.T) {
@@ -306,6 +322,38 @@ func TestA2AClient_HealthCheck(t *testing.T) {
 		err = client.HealthCheck(context.Background())
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "500")
+	})
+
+	t.Run("unhealthy when agent card JSON is invalid", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`not-json`))
+		}))
+		defer srv.Close()
+
+		cfg := adapters.NewTestConfig(map[string]any{"url": srv.URL})
+		client, err := adapters.NewA2AClient(cfg, adapters.NewNoopLogger())
+		require.NoError(t, err)
+
+		err = client.HealthCheck(context.Background())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid a2a agent card json")
+	})
+
+	t.Run("unhealthy when agent card is missing name", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"description":"no name field"}`))
+		}))
+		defer srv.Close()
+
+		cfg := adapters.NewTestConfig(map[string]any{"url": srv.URL})
+		client, err := adapters.NewA2AClient(cfg, adapters.NewNoopLogger())
+		require.NoError(t, err)
+
+		err = client.HealthCheck(context.Background())
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "missing name")
 	})
 
 	t.Run("unhealthy when endpoint is unreachable", func(t *testing.T) {

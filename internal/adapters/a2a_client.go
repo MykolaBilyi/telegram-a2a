@@ -112,9 +112,9 @@ func (c *A2AClient) SendMessage(ctx context.Context, messageText string, context
 	return rpcResp.Result, nil
 }
 
-// HealthCheck probes the A2A agent card endpoint (/.well-known/agent.json) or base URL.
+// HealthCheck probes and validates the A2A agent card endpoint (/.well-known/agent-card.json).
 func (c *A2AClient) HealthCheck(ctx context.Context) error {
-	healthURL := c.endpointURL + ".well-known/agent.json"
+	healthURL := c.endpointURL + ".well-known/agent-card.json"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
 	if err != nil {
 		return fmt.Errorf("create a2a health request: %w", err)
@@ -125,10 +125,23 @@ func (c *A2AClient) HealthCheck(ctx context.Context) error {
 		return fmt.Errorf("a2a endpoint unreachable: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	_, _ = io.Copy(io.Discard, resp.Body)
 
-	if resp.StatusCode >= 500 {
-		return fmt.Errorf("a2a endpoint returned server error: %d", resp.StatusCode)
+	respBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read a2a agent card response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("a2a agent card returned unexpected status: %d", resp.StatusCode)
+	}
+
+	var card entities.AgentCard
+	if err := json.Unmarshal(respBytes, &card); err != nil {
+		return fmt.Errorf("invalid a2a agent card json: %w", err)
+	}
+
+	if strings.TrimSpace(card.Name) == "" {
+		return errors.New("invalid a2a agent card: missing name")
 	}
 
 	return nil

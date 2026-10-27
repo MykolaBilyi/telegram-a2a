@@ -94,3 +94,11 @@ type PendingApproval struct {
 	UserID    int64
 	ChatID    int64
 }
+
+// AgentCard represents the A2A discovery document at /.well-known/agent-card.json.
+type AgentCard struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	URL         string `json:"url,omitempty"`
+	Version     string `json:"version,omitempty"`
+}
