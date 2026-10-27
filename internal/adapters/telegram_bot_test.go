@@ -78,6 +78,10 @@ func newFakeTelegramServer(t *testing.T, initialUpdates []map[string]any) *fakeT
 		switch method {
 		case "getMe":
 			_, _ = w.Write([]byte(`{"ok":true,"result":{"id":999,"username":"a2a_bot"}}`))
+		case "getMyCommands":
+			_, _ = w.Write([]byte(`{"ok":true,"result":[]}`))
+		case "deleteMyCommands":
+			_, _ = w.Write([]byte(`{"ok":true,"result":true}`))
 		case "getUpdates":
 			f.mu.Lock()
 			upds := f.updates
@@ -186,14 +190,17 @@ func TestTelegramBot_CommandsAndAllowlist(t *testing.T) {
 	defer cancel()
 	go func() { _ = bot.Start(ctx) }()
 
-	calls := tgSrv.waitForCalls(t, 4)
+	calls := tgSrv.waitForCalls(t, 7)
 	_ = bot.Stop(context.Background())
 
-	assert.Contains(t, calls[0].Payload["text"], "Unauthorized")
-	assert.Contains(t, calls[1].Payload["text"], "Welcome to the A2A Telegram Gateway")
-	assert.Contains(t, calls[2].Payload["text"], "ONLINE")
-	assert.Contains(t, calls[2].Payload["text"], "existing-ctx-id")
-	assert.Contains(t, calls[3].Payload["text"], "Conversation session reset")
+	assert.Equal(t, "getMyCommands", calls[0].Method)
+	assert.Equal(t, "deleteMyCommands", calls[1].Method)
+	assert.Equal(t, "setMyCommands", calls[2].Method)
+	assert.Contains(t, calls[3].Payload["text"], "Unauthorized")
+	assert.Contains(t, calls[4].Payload["text"], "Welcome to the A2A Telegram Gateway")
+	assert.Contains(t, calls[5].Payload["text"], "ONLINE")
+	assert.Contains(t, calls[5].Payload["text"], "existing-ctx-id")
+	assert.Contains(t, calls[6].Payload["text"], "Conversation session reset")
 
 	_, hasCtx := store.GetContextID(42)
 	assert.False(t, hasCtx, "/new should clear user's contextId")
@@ -248,18 +255,21 @@ func TestTelegramBot_NormalMessageAndSessionContinuity(t *testing.T) {
 	defer cancel()
 	go func() { _ = bot.Start(ctx) }()
 
-	// 2 messages -> each does sendMessage("Thinking...") + editMessageText("Reply to: ...") = 4 calls
-	calls := tgSrv.waitForCalls(t, 4)
+	// registration (get/delete/set) + 2 messages -> each does sendMessage("Thinking...") + editMessageText("Reply to: ...") = 7 calls
+	calls := tgSrv.waitForCalls(t, 7)
 	_ = bot.Stop(context.Background())
 
-	assert.Equal(t, "sendMessage", calls[0].Method)
-	assert.Equal(t, "Thinking...", calls[0].Payload["text"])
-	assert.Equal(t, "editMessageText", calls[1].Method)
-	assert.Equal(t, "Reply to: list pods", calls[1].Payload["text"])
+	assert.Equal(t, "getMyCommands", calls[0].Method)
+	assert.Equal(t, "deleteMyCommands", calls[1].Method)
+	assert.Equal(t, "setMyCommands", calls[2].Method)
+	assert.Equal(t, "sendMessage", calls[3].Method)
+	assert.Equal(t, "Thinking...", calls[3].Payload["text"])
+	assert.Equal(t, "editMessageText", calls[4].Method)
+	assert.Equal(t, "Reply to: list pods", calls[4].Payload["text"])
 
-	assert.Equal(t, "sendMessage", calls[2].Method)
-	assert.Equal(t, "editMessageText", calls[3].Method)
-	assert.Equal(t, "Reply to: scale nginx to 3", calls[3].Payload["text"])
+	assert.Equal(t, "sendMessage", calls[5].Method)
+	assert.Equal(t, "editMessageText", calls[6].Method)
+	assert.Equal(t, "Reply to: scale nginx to 3", calls[6].Payload["text"])
 
 	a2aStub.mu.Lock()
 	defer a2aStub.mu.Unlock()
@@ -343,9 +353,9 @@ func TestTelegramBot_HITLApprovalAndCallbackFlow(t *testing.T) {
 	defer cancel()
 	go func() { _ = bot.Start(ctx) }()
 
-	// Wait for sendMessage("Thinking...") + editMessageText(with inline keyboard)
-	calls := tgSrv.waitForCalls(t, 2)
-	editCall := calls[1]
+	// Wait for getMyCommands + deleteMyCommands + setMyCommands + sendMessage("Thinking...") + editMessageText(with inline keyboard)
+	calls := tgSrv.waitForCalls(t, 5)
+	editCall := calls[4]
 	assert.Equal(t, "editMessageText", editCall.Method)
 	assert.Contains(t, editCall.Payload["text"], "k8s_create_resource")
 	assert.Contains(t, editCall.Payload["text"], "namespace: staging")
@@ -374,15 +384,14 @@ func TestTelegramBot_HITLApprovalAndCallbackFlow(t *testing.T) {
 	})
 	tgSrv.mu.Unlock()
 
-	// Expect answerCallbackQuery + editMessageText("Approved. Processing...") + editMessageText("Namespace staging created successfully.")
-	allCalls := tgSrv.waitForCalls(t, 5)
+	allCalls := tgSrv.waitForCalls(t, 8)
 	_ = bot.Stop(context.Background())
 
-	assert.Equal(t, "answerCallbackQuery", allCalls[2].Method)
-	assert.Equal(t, "editMessageText", allCalls[3].Method)
-	assert.Equal(t, "Approved. Processing...", allCalls[3].Payload["text"])
-	assert.Equal(t, "editMessageText", allCalls[4].Method)
-	assert.Equal(t, "Namespace staging created successfully.", allCalls[4].Payload["text"])
+	assert.Equal(t, "answerCallbackQuery", allCalls[5].Method)
+	assert.Equal(t, "editMessageText", allCalls[6].Method)
+	assert.Equal(t, "Approved. Processing...", allCalls[6].Payload["text"])
+	assert.Equal(t, "editMessageText", allCalls[7].Method)
+	assert.Equal(t, "Namespace staging created successfully.", allCalls[7].Payload["text"])
 
 	a2aStub.mu.Lock()
 	defer a2aStub.mu.Unlock()
@@ -477,9 +486,9 @@ func TestTelegramBot_WhenA2AReturnsError_EditsThinkingMessageWithError(t *testin
 	defer cancel()
 	go func() { _ = bot.Start(ctx) }()
 
-	calls := tgSrv.waitForCalls(t, 2)
+	calls := tgSrv.waitForCalls(t, 5)
 	_ = bot.Stop(context.Background())
 
-	assert.Equal(t, "editMessageText", calls[1].Method)
-	assert.Contains(t, calls[1].Payload["text"], "Error contacting agent: connection refused")
+	assert.Equal(t, "editMessageText", calls[4].Method)
+	assert.Contains(t, calls[4].Payload["text"], "Error contacting agent: connection refused")
 }

@@ -70,6 +70,11 @@ type tgInlineKeyboardMarkup struct {
 	InlineKeyboard [][]tgInlineKeyboardButton `json:"inline_keyboard"`
 }
 
+type tgBotCommand struct {
+	Command     string `json:"command"`
+	Description string `json:"description"`
+}
+
 // TelegramBot implements long-polling Telegram Bot API and bridges messages to A2A.
 type TelegramBot struct {
 	token        string
@@ -148,6 +153,9 @@ func (b *TelegramBot) Start(ctx context.Context) error {
 	}()
 
 	b.logger.Info("telegram bot polling started")
+	b.logger.Debug("telegram bot polling configuration", ports.Fields{"pollTimeout": b.pollTimeout})
+
+	b.registerCommands(pollCtx)
 
 	var offset int64
 	for {
@@ -172,6 +180,9 @@ func (b *TelegramBot) Start(ctx context.Context) error {
 			}
 		}
 
+		if len(updates) > 0 {
+			b.logger.Debug("received telegram updates", ports.Fields{"count": len(updates)})
+		}
 		for _, u := range updates {
 			if u.UpdateID >= offset {
 				offset = u.UpdateID + 1
@@ -210,6 +221,49 @@ func (b *TelegramBot) HealthCheck(ctx context.Context) error {
 	return nil
 }
 
+func (b *TelegramBot) registerCommands(ctx context.Context) {
+	expected := []tgBotCommand{
+		{Command: "start", Description: "Show welcome and help message"},
+		{Command: "new", Description: "Reset conversation session"},
+		{Command: "status", Description: "Check connectivity to the A2A agent"},
+	}
+
+	var existing []tgBotCommand
+	if err := b.callAPI(ctx, "getMyCommands", nil, &existing); err != nil {
+		b.logger.Error("failed to get telegram bot commands", ports.Fields{"error": err})
+		return
+	}
+
+	if commandsEqual(existing, expected) {
+		b.logger.Debug("telegram bot commands already up to date")
+		return
+	}
+
+	if err := b.callAPI(ctx, "deleteMyCommands", nil, nil); err != nil {
+		b.logger.Error("failed to delete telegram bot commands", ports.Fields{"error": err})
+		return
+	}
+
+	payload := map[string]any{
+		"commands": expected,
+	}
+	if err := b.callAPI(ctx, "setMyCommands", payload, nil); err != nil {
+		b.logger.Error("failed to register telegram bot commands", ports.Fields{"error": err})
+	}
+}
+
+func commandsEqual(a, b []tgBotCommand) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Command != b[i].Command || a[i].Description != b[i].Description {
+			return false
+		}
+	}
+	return true
+}
+
 func (b *TelegramBot) isUserAllowed(userID int64) bool {
 	if len(b.allowedUsers) == 0 {
 		return true
@@ -219,6 +273,7 @@ func (b *TelegramBot) isUserAllowed(userID int64) bool {
 }
 
 func (b *TelegramBot) handleUpdate(ctx context.Context, update tgUpdate) {
+	b.logger.Debug("handling telegram update", ports.Fields{"update_id": update.UpdateID})
 	if update.CallbackQuery != nil {
 		b.handleCallbackQuery(ctx, update.CallbackQuery)
 		return
@@ -242,6 +297,7 @@ func (b *TelegramBot) handleMessage(ctx context.Context, msg *tgMessage) {
 	}
 
 	text := strings.TrimSpace(msg.Text)
+	b.logger.Debug("handling telegram message", ports.Fields{"user_id": userID, "chat_id": chatID, "text": text})
 	switch {
 	case text == "/start" || strings.HasPrefix(text, "/start@"):
 		welcome := "Welcome to the A2A Telegram Gateway!\n\nAvailable commands:\n" +
@@ -573,6 +629,7 @@ func (b *TelegramBot) answerCallbackQuery(ctx context.Context, callbackQueryID s
 }
 
 func (b *TelegramBot) callAPI(ctx context.Context, method string, payload any, out any) error {
+	b.logger.Debug("telegram api request", ports.Fields{"method": method})
 	url := fmt.Sprintf("%s/%s", b.baseURL, method)
 
 	var bodyReader io.Reader
@@ -618,5 +675,6 @@ func (b *TelegramBot) callAPI(ctx context.Context, method string, payload any, o
 		}
 	}
 
+	b.logger.Debug("telegram api response", ports.Fields{"method": method, "ok": apiResp.OK})
 	return nil
 }
