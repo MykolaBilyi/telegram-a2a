@@ -1,8 +1,18 @@
 application:
   shutdownTimeout: 10s
+  approvalTTL: 1h
 
 http:
   listenAddr: ":8080"
+
+telegram:
+  botToken: ""
+  pollTimeout: 30s
+  allowedUsers: []
+
+a2a:
+  url: "http://localhost:8083/api/a2a/kagent/telegram-k8s-agent/"
+  timeout: 120s
 
 logger:
   level: info

@@ -1,9 +1,9 @@
 package main
 
 import (
-	"__template__/api/server"
-	"__template__/internal/adapters"
-	"__template__/internal/ports"
+	"telegram-a2a/api/server"
+	"telegram-a2a/internal/adapters"
+	"telegram-a2a/internal/ports"
 	"context"
 	"syscall"
 

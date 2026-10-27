@@ -1,8 +1,8 @@
 package middleware
 
 import (
-	"__template__/internal/ports"
-	"__template__/pkg/middleware"
+	"telegram-a2a/internal/ports"
+	"telegram-a2a/pkg/middleware"
 	"net/http"
 	"runtime/debug"
 )

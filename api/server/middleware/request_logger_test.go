@@ -1,12 +1,12 @@
 package middleware_test
 
 import (
-	"__template__/api/server/middleware"
-	"__template__/internal/adapters"
-	adapter_mocks "__template__/internal/adapters/mocks"
-	"__template__/internal/ports"
-	"__template__/internal/providers"
-	provider_mocks "__template__/internal/providers/mocks"
+	"telegram-a2a/api/server/middleware"
+	"telegram-a2a/internal/adapters"
+	adapter_mocks "telegram-a2a/internal/adapters/mocks"
+	"telegram-a2a/internal/ports"
+	"telegram-a2a/internal/providers"
+	provider_mocks "telegram-a2a/internal/providers/mocks"
 	"net/http"
 	"net/http/httptest"
 	"testing"

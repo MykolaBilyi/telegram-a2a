@@ -1,8 +1,8 @@
 package providers
 
 import (
-	"__template__/internal/entities"
-	"__template__/pkg/providers"
+	"telegram-a2a/internal/entities"
+	"telegram-a2a/pkg/providers"
 	"context"
 )
 

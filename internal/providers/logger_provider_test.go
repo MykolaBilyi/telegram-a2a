@@ -1,8 +1,8 @@
 package providers_test
 
 import (
-	"__template__/internal/adapters"
-	"__template__/internal/providers"
+	"telegram-a2a/internal/adapters"
+	"telegram-a2a/internal/providers"
 	"context"
 	"testing"
 

@@ -1,7 +1,7 @@
 package adapters
 
 import (
-	"__template__/internal/ports"
+	"telegram-a2a/internal/ports"
 	"context"
 
 	zaplogfmt "github.com/sykesm/zap-logfmt"

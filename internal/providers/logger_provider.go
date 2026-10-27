@@ -1,7 +1,7 @@
 package providers
 
 import (
-	"__template__/internal/ports"
+	"telegram-a2a/internal/ports"
 	"context"
 
 	"github.com/google/uuid"
