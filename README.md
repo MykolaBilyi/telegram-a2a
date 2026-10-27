@@ -10,7 +10,7 @@ Lightweight Go gateway between Telegram (long polling) and an A2A-compatible age
 - **Human-in-the-Loop (HITL) Approvals**: Handles `input-required` responses and `adk_request_confirmation` parts by presenting `[ Approve ]` / `[ Reject ]` or choice inline keyboard buttons in Telegram.
 - **Access Control**: Optional allowlist of Telegram user IDs (`TELEGRAM_ALLOWED_USERS`).
 - **Automatic Chunking**: Splits long agent responses into 4000-character messages to respect Telegram's 4096-character limit.
-- **Composite Health Check (`/health`)**: Actively verifies both the Telegram Bot API (`getMe`) and A2A agent (`/.well-known/agent.json`) connections.
+- **Composite Health Check (`/health`)**: Actively verifies both the Telegram Bot API (`getMe`) and A2A agent (`/.well-known/agent-card.json`) connections.
 
 ## Configuration
 
