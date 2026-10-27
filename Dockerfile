@@ -10,7 +10,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w" -o /app ./cmd/app/main.go
 
 # final stage
-FROM alpine:3.20
+FROM alpine:3.24
 RUN apk --no-cache add ca-certificates
 COPY --from=builder /app /app
 COPY --from=builder /src/configs/default.yml /default.yml
